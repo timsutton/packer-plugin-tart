@@ -5,6 +5,8 @@ package tart
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/packer-plugin-sdk/bootcommand"
 	"github.com/hashicorp/packer-plugin-sdk/common"
@@ -14,26 +16,26 @@ import (
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 	"github.com/hashicorp/packer-plugin-sdk/template/config"
 	"github.com/hashicorp/packer-plugin-sdk/template/interpolate"
-	"time"
 )
 
 const BuilderId = "tart.builder"
 
 type Config struct {
-	common.PackerConfig   `mapstructure:",squash"`
-	bootcommand.VNCConfig `mapstructure:",squash"`
-	FromIPSW              string              `mapstructure:"from_ipsw" required:"true"`
-	FromISO               []string            `mapstructure:"from_iso" required:"true"`
-	VMName                string              `mapstructure:"vm_name" required:"true"`
-	VMBaseName            string              `mapstructure:"vm_base_name" required:"true"`
-	Recovery              bool                `mapstructure:"recovery" required:"false"`
-	CpuCount              uint8               `mapstructure:"cpu_count" required:"false"`
-	MemoryGb              uint16              `mapstructure:"memory_gb" required:"false"`
-	Display               string              `mapstructure:"display" required:"false"`
-	DiskSizeGb            uint16              `mapstructure:"disk_size_gb" required:"false"`
-	Headless              bool                `mapstructure:"headless" required:"false"`
-	CreateGraceTime       time.Duration       `mapstructure:"create_grace_time" required:"false"`
-	Comm                  communicator.Config `mapstructure:",squash"`
+	common.PackerConfig    `mapstructure:",squash"`
+	bootcommand.VNCConfig  `mapstructure:",squash"`
+	commonsteps.HTTPConfig `mapstructure:",squash"`
+	FromIPSW               string              `mapstructure:"from_ipsw" required:"true"`
+	FromISO                []string            `mapstructure:"from_iso" required:"true"`
+	VMName                 string              `mapstructure:"vm_name" required:"true"`
+	VMBaseName             string              `mapstructure:"vm_base_name" required:"true"`
+	Recovery               bool                `mapstructure:"recovery" required:"false"`
+	CpuCount               uint8               `mapstructure:"cpu_count" required:"false"`
+	MemoryGb               uint16              `mapstructure:"memory_gb" required:"false"`
+	Display                string              `mapstructure:"display" required:"false"`
+	DiskSizeGb             uint16              `mapstructure:"disk_size_gb" required:"false"`
+	Headless               bool                `mapstructure:"headless" required:"false"`
+	CreateGraceTime        time.Duration       `mapstructure:"create_grace_time" required:"false"`
+	Comm                   communicator.Config `mapstructure:",squash"`
 
 	ctx interpolate.Context
 }
@@ -47,14 +49,23 @@ func (b *Builder) ConfigSpec() hcldec.ObjectSpec { return b.config.FlatMapstruct
 
 func (b *Builder) Prepare(raws ...interface{}) (generatedVars []string, warnings []string, err error) {
 	err = config.Decode(&b.config, &config.DecodeOpts{
-		PluginType:  "packer.builder.tart",
-		Interpolate: true,
+		PluginType:         "packer.builder.tart",
+		Interpolate:        true,
+		InterpolateContext: &b.config.ctx,
+		InterpolateFilter: &interpolate.RenderFilter{
+			Exclude: []string{
+				"boot_command",
+			},
+		},
 	}, raws...)
 	if err != nil {
 		return nil, nil, err
 	}
 	var errs *packer.MultiError
 	errs = packer.MultiErrorAppend(errs, b.config.Comm.Prepare(&b.config.ctx)...)
+	errs = packer.MultiErrorAppend(errs, b.config.HTTPConfig.Prepare(&b.config.ctx)...)
+	errs = packer.MultiErrorAppend(errs, b.config.VNCConfig.Prepare(&b.config.ctx)...)
+
 	return nil, nil, nil
 }
 
@@ -72,6 +83,8 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 	steps = append(steps,
 		new(stepSetVM),
 		new(stepDiskFilePrepare),
+		new(stepHTTPIPDiscover),
+		commonsteps.HTTPServerFromHTTPConfig(&b.config.HTTPConfig),
 		new(stepRun),
 	)
 

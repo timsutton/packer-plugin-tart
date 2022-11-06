@@ -4,21 +4,27 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"os/exec"
+	"regexp"
+	"time"
+
 	"github.com/hashicorp/packer-plugin-sdk/bootcommand"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	packersdk "github.com/hashicorp/packer-plugin-sdk/packer"
 	"github.com/hashicorp/packer-plugin-sdk/template/interpolate"
 	"github.com/mitchellh/go-vnc"
-	"net"
-	"os/exec"
-	"regexp"
-	"time"
 )
 
 var vncRegexp = regexp.MustCompile("vnc://.*:(.*)@(.*):([0-9]{1,5})")
 
 type stepRun struct {
 	vmName string
+}
+
+type VNCBootCommandTemplateData struct {
+	HTTPIP   string
+	HTTPPort int
 }
 
 func (s *stepRun) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
@@ -165,7 +171,15 @@ func typeBootCommandOverVNC(
 
 	ui.Say("Typing the commands over VNC...")
 
+	hostIP := state.Get("http_ip").(string)
+	httpPort := state.Get("http_port").(int)
+	config.ctx.Data = &VNCBootCommandTemplateData{
+		HTTPIP:   hostIP,
+		HTTPPort: httpPort,
+	}
+
 	command, err := interpolate.Render(config.VNCConfig.FlatBootCommand(), &config.ctx)
+
 	if err != nil {
 		err := fmt.Errorf("Failed to render the boot command: %s", err)
 		state.Put("error", err)
