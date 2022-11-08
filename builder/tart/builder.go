@@ -83,7 +83,7 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 	steps = append(steps,
 		new(stepSetVM),
 		new(stepDiskFilePrepare),
-		new(stepHTTPIPDiscover),
+		// new(stepHTTPIPDiscover),
 		commonsteps.HTTPServerFromHTTPConfig(&b.config.HTTPConfig),
 		new(stepRun),
 	)

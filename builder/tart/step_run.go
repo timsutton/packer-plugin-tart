@@ -3,8 +3,10 @@ package tart
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"time"
@@ -64,6 +66,23 @@ func (s *stepRun) Run(ctx context.Context, state multistep.StateBag) multistep.S
 	}
 
 	state.Put("tart-cmd", cmd)
+
+	// HACK: bridge100 interface with IP takes a while to show up, so we just sleep
+	// until we implement a proper wait loop.
+	// Also, this probably would make sense to break up into separate steps so
+	// that this is not all just part of the run step.
+	time.Sleep(10 * time.Second)
+
+	ip, err := ifconfig("bridge100")
+	if err != nil {
+		err := fmt.Errorf("Failed to parse IP from bridge100 interface: %s", err)
+		state.Put("error", err)
+		ui.Error(err.Error())
+	}
+
+	ui.Say(fmt.Sprintf("discovered IP: %v", ip))
+
+	state.Put("http_ip", ip)
 
 	if (len(config.FromISO) == 0) && !config.DisableVNC {
 		if !typeBootCommandOverVNC(ctx, state, config, ui, stdout) {
@@ -206,4 +225,32 @@ func typeBootCommandOverVNC(
 	}
 
 	return true
+}
+
+// Lifted from the vmware builder (reduced since we can assume this builder
+// is only ever used on Darwin, and thus use consistent executable paths)
+func ifconfig(device string) (string, error) {
+	ifconfigPath := "/sbin/ifconfig"
+
+	stdout := new(bytes.Buffer)
+
+	cmd := exec.Command(ifconfigPath, device)
+	// Force LANG=C so that the output is what we expect it to be
+	// despite the locale.
+	cmd.Env = append(cmd.Env, "LANG=C")
+	cmd.Env = append(cmd.Env, os.Environ()...)
+
+	cmd.Stdout = stdout
+	cmd.Stderr = new(bytes.Buffer)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	re := regexp.MustCompile(`inet[^\d]+([\d\.]+)\s`)
+	matches := re.FindStringSubmatch(stdout.String())
+	if matches == nil {
+		return "", errors.New("IP not found in ifconfig output...")
+	}
+
+	return matches[1], nil
 }
